@@ -6,6 +6,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .config import STYLES
 from .engine import MAX_WATCHLIST
+from .scraper import scrape_realtime_price
 
 
 def serve(scanner, cfg):
@@ -58,6 +59,14 @@ def serve(scanner, cfg):
                 watchlist = set(scanner.cfg["watchlist"])
                 results = [{**r, "in_watchlist": r["ticker"] in watchlist} for r in scanner.source.search(q)]
                 self._json(200, {"results": results})
+            elif url.path == "/api/realtime-price":
+                ticker = (query.get("ticker") or [""])[0].strip().upper().removesuffix(".JK")
+                if not ticker:
+                    self._json(400, {"error": "Parameter ticker diperlukan"})
+                    return
+                res = scrape_realtime_price(ticker)
+                code = 200 if res["success"] else 502
+                self._json(code, res)
             elif url.path == "/":
                 self._json(200, {"message": "API pemindai sinyal IDX. Dashboard: jalankan `npm run dev` di folder web "
                                             "lalu buka http://localhost:3000"})

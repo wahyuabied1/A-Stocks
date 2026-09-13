@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { STYLE_LABEL, isStyle, pct, rp } from "@/lib/format";
 import { isFullChart, type ChartData, type ChartResponse, type ScannerState, type Style } from "@/lib/types";
 import { usePolling } from "@/lib/usePolling";
@@ -27,6 +27,14 @@ const LAYER_LABEL: Record<keyof Layers, string> = {
   candles: "Pola candle",
 };
 
+interface RealtimeState {
+  price: number | null;
+  source: string | null;
+  asOf: string | null;
+  loading: boolean;
+  error: string | null;
+}
+
 export default function StockDetail({ ticker, initialStyle }: { ticker: string; initialStyle?: string }) {
   const router = useRouter();
   const { data: state, error: stateError, reload: reloadState } = usePolling<ScannerState>("/api/state", 15000);
@@ -38,7 +46,111 @@ export default function StockDetail({ ticker, initialStyle }: { ticker: string; 
   const chartUrl = style ? `/api/chart?ticker=${encodeURIComponent(ticker)}&style=${style}` : null;
   const { data: chart, error: chartError, reload: reloadChart } = usePolling<ChartResponse>(chartUrl, 30000);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [layers, setLayers] = useState<Layers>({ plan: true, zones: true, ma: true, vwap: true, limits: false, candles: true });
+  const [layers, setLayers] = useState<Layers>({ plan: true, zones: false, ma: false, vwap: false, limits: false, candles: false });
+
+  // State mode real-time (scraping)
+  const [isRealtime, setIsRealtime] = useState(false);
+  const [realtime, setRealtime] = useState<RealtimeState>({
+    price: null,
+    source: null,
+    asOf: null,
+    loading: false,
+    error: null,
+  });
+  const [countdown, setCountdown] = useState(30);
+
+  // State autentikasi password untuk mengaktifkan mode real-time
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authPassword, setAuthPassword] = useState("");
+  const [authError, setAuthError] = useState<string | null>(null);
+
+  function handleToggleRealtime() {
+    if (isRealtime) {
+      // Jika aktif, matikan langsung tanpa tanya password
+      setIsRealtime(false);
+    } else {
+      // Jika mau mengaktifkan, wajib input password
+      setAuthPassword("");
+      setAuthError(null);
+      setShowAuthModal(true);
+    }
+  }
+
+  function handleConfirmPassword(e: React.FormEvent) {
+    e.preventDefault();
+    if (authPassword === "fibod123qweasdzxc") {
+      setIsRealtime(true);
+      setShowAuthModal(false);
+      setAuthPassword("");
+      setAuthError(null);
+    } else {
+      setAuthError("Password salah! Akses mode real-time ditolak.");
+    }
+  }
+
+  // Polling scraping setiap 30 detik, dan otomatis berhenti jika user meninggalkan halaman
+  useEffect(() => {
+    if (!isRealtime) {
+      return;
+    }
+
+    let isMounted = true;
+    const controller = new AbortController();
+
+    async function fetchRealtimePrice() {
+      setRealtime((prev) => ({ ...prev, loading: true, error: null }));
+      try {
+        const res = await fetch(`/api/realtime-price?ticker=${encodeURIComponent(ticker)}`, {
+          signal: controller.signal,
+          cache: "no-store",
+        });
+        const data = await res.json();
+        if (!isMounted) return;
+        if (res.ok && data.success && typeof data.price === "number") {
+          setRealtime({
+            price: data.price,
+            source: data.source ?? "scraping",
+            asOf: data.as_of ?? new Date().toLocaleTimeString("id-ID"),
+            loading: false,
+            error: null,
+          });
+          setCountdown(30);
+        } else {
+          setRealtime((prev) => ({
+            ...prev,
+            loading: false,
+            error: data.error ?? "Gagal mengambil harga terkini via scraping",
+          }));
+        }
+      } catch (err: unknown) {
+        if ((err as Error)?.name === "AbortError" || !isMounted) return;
+        setRealtime((prev) => ({
+          ...prev,
+          loading: false,
+          error: "Koneksi terputus saat scraping",
+        }));
+      }
+    }
+
+    // Panggilan pertama saat tombol di-enable
+    fetchRealtimePrice();
+
+    // Scraping berkala setiap 30 detik sekali (30.000 ms)
+    const intervalId = setInterval(fetchRealtimePrice, 30_000);
+
+    // Timer countdown 1 detik untuk transparansi visual
+    const timerId = setInterval(() => {
+      setCountdown((c) => (c > 1 ? c - 1 : 30));
+    }, 1000);
+
+    return () => {
+      // STOP melakukan scraping saat user unmount / meninggalkan halaman
+      isMounted = false;
+      controller.abort();
+      clearInterval(intervalId);
+      clearInterval(timerId);
+    };
+  }, [isRealtime, ticker]);
 
   const full = isFullChart(chart) ? chart : null;
   const signal = full ? full.signals.find((s) => s.id === selectedId) ?? full.signals.find((s) => s.plan) ?? full.signals[0] ?? null : null;
@@ -63,16 +175,58 @@ export default function StockDetail({ ticker, initialStyle }: { ticker: string; 
           {state && inWatchlist && (
             <WatchlistToggle ticker={ticker} inWatchlist onChanged={() => { reloadState(); reloadChart(); }} />
           )}
+
+          <button
+            type="button"
+            className={`realtime-toggle-btn ${isRealtime ? "active" : ""}`}
+            onClick={handleToggleRealtime}
+            title={isRealtime ? "Klik untuk mematikan mode real-time" : "Klik untuk mengaktifkan scraping harga real-time (perlu password)"}
+          >
+            <span className={`realtime-dot ${isRealtime ? "live pulse" : ""}`} />
+            {isRealtime ? "Real-time: ON (30 dtk)" : "Real-time: OFF"}
+          </button>
+
           {full && (
             <>
-              <span className="price">{rp(full.summary.price)}</span>
-              <ChangeBadge data={full} />
+              <span className="price">
+                {rp(isRealtime && realtime.price !== null ? realtime.price : full.summary.price)}
+              </span>
+              {isRealtime && realtime.price !== null && (
+                <span className="live-badge">LIVE</span>
+              )}
+              <ChangeBadge data={full} overridePrice={isRealtime ? realtime.price : null} />
               <span className="meta">
-                data {full.timeframe} · per {full.as_of}
+                {isRealtime ? (
+                  <>
+                    sumber: <b>{realtime.source ?? "scraping"}</b> · per {realtime.asOf ?? "-"}
+                    {realtime.loading ? " (memuat data…)" : ` · refresh dalam ${countdown}s`}
+                  </>
+                ) : (
+                  <>data {full.timeframe} · per {full.as_of}</>
+                )}
               </span>
             </>
           )}
         </div>
+
+        {isRealtime && (
+          <div className="realtime-notice">
+            <div className="realtime-notice-header">
+              <span className="realtime-badge-chip">
+                <span className="realtime-dot live pulse" /> MODE REAL-TIME AKTIF (30 DETIK)
+              </span>
+              <span className="realtime-timer">
+                {realtime.loading ? "Sedang mengambil data terbaru…" : `Scraping berikutnya dalam ${countdown} detik`}
+              </span>
+            </div>
+            <p className="realtime-notice-text">
+              💡 <strong>Catatan:</strong> Fitur ini hanya mengambil data harga terkini via <em>web scraping</em> setiap <strong>30 detik sekali</strong>. Pembaruan otomatis <strong>berhenti seketika</strong> saat Anda meninggalkan halaman ini.
+            </p>
+            {realtime.error && (
+              <p className="realtime-notice-error">⚠️ Scraping: {realtime.error} (menampilkan harga terakhir yang berhasil didapat)</p>
+            )}
+          </div>
+        )}
 
         {state && !inWatchlist && (
           <div className="notice">
@@ -176,14 +330,62 @@ export default function StockDetail({ ticker, initialStyle }: { ticker: string; 
           </footer>
         )}
       </main>
+
+      {showAuthModal && (
+        <div className="modal-overlay" onClick={() => setShowAuthModal(false)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>🔐 Konfirmasi Password Real-time</h3>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => setShowAuthModal(false)}
+                aria-label="Tutup"
+              >
+                ✕
+              </button>
+            </div>
+            <p className="meta" style={{ marginTop: 0, marginBottom: 14 }}>
+              Masukkan password untuk mengaktifkan pembaruan harga real-time setiap 30 detik.
+            </p>
+            <form onSubmit={handleConfirmPassword}>
+              <div className="modal-field">
+                <input
+                  type="password"
+                  className="modal-input"
+                  placeholder="Masukkan password..."
+                  value={authPassword}
+                  onChange={(e) => {
+                    setAuthPassword(e.target.value);
+                    if (authError) setAuthError(null);
+                  }}
+                  autoFocus
+                  required
+                />
+              </div>
+              {authError && <p className="modal-error">{authError}</p>}
+              <div className="modal-actions">
+                <button type="button" onClick={() => setShowAuthModal(false)}>
+                  Batal
+                </button>
+                <button type="submit" className="primary">
+                  Aktifkan
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </>
   );
 }
 
-function ChangeBadge({ data }: { data: ChartData }) {
+function ChangeBadge({ data, overridePrice }: { data: ChartData; overridePrice?: number | null }) {
   const bars = data.bars;
   if (bars.length < 2) return null;
-  const change = (bars[bars.length - 1].close / bars[bars.length - 2].close - 1) * 100;
+  const prevClose = bars[bars.length - 2].close;
+  const currentPrice = overridePrice ?? bars[bars.length - 1].close;
+  const change = (currentPrice / prevClose - 1) * 100;
   return <span className={change > 0 ? "pos" : change < 0 ? "neg" : "meta"}>{pct(change)} vs bar sebelumnya</span>;
 }
 
