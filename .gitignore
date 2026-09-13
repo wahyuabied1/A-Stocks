@@ -1,0 +1,17 @@
+# Python
+.venv/
+__pycache__/
+
+# Konfigurasi & state lokal (config.json bisa berisi token Telegram)
+config.json
+.scanner_state.json
+*.tmp
+
+# Data CSV pribadi
+data/
+
+# Claude Code (pengaturan pribadi)
+.claude/settings.local.json
+
+# OS
+.DS_Store

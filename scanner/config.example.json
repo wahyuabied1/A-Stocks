@@ -1,0 +1,23 @@
+{
+  "_catatan": "Isi watchlist dengan kode saham tanpa .JK. Hapus gaya yang tidak dipakai dari 'styles'. Lihat README.md untuk arti setiap pengaturan.",
+  "watchlist": ["BBCA", "BBRI", "TLKM"],
+  "styles": ["scalper", "bpjs", "bsjp", "swing"],
+
+  "data_source": "yfinance",
+  "csv_dir": "data",
+  "refresh_seconds": {"scalper": 60, "bpjs": 120, "bsjp": 300, "swing": 900},
+
+  "_catatan_aturan": "board: utama | akselerasi | pemantauan. price_rule: lama (min Rp50) | baru (min Rp1).",
+  "board": "utama",
+  "arb_pct": 0.15,
+  "price_rule": "lama",
+
+  "fees": {"buy_pct": 0.15, "sell_pct": 0.25},
+  "_catatan_risk": "risk_per_trade_rp: batas rugi (Rp) per transaksi yang KAMU tetapkan, untuk menghitung jumlah lot. null = tidak dihitung. min_reward_risk: R:R minimum per gaya (BSJP/scalper lebih rendah karena target pendek).",
+  "risk": {"risk_per_trade_rp": null, "min_reward_risk": {"swing": 1.5, "bpjs": 1.2, "bsjp": 1.0, "scalper": 1.0}},
+
+  "_catatan_telegram": "Buat bot lewat @BotFather, isi bot_token & chat_id, lalu set enabled: true. Jangan bagikan file ini.",
+  "telegram": {"enabled": false, "bot_token": "", "chat_id": "", "statuses": ["SETUP", "WASPADA"]},
+
+  "dashboard": {"host": "127.0.0.1", "port": 8765}
+}
